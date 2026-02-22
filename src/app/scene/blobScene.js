@@ -13,7 +13,11 @@ import { createDragController } from "./interaction";
 function loadAmmo() {
   return new Promise((resolve, reject) => {
     if (window.Ammo) {
-      window.Ammo().then(resolve).catch(reject);
+      if (typeof window.Ammo === "function") {
+        window.Ammo().then(resolve).catch(reject);
+      } else {
+        resolve(window.Ammo);
+      }
       return;
     }
 
@@ -100,22 +104,22 @@ export function initBlobScene(container) {
       collisionConfiguration,
       softBodySolver
     );
-    physicsWorld.setGravity(new Ammo.btVector3(0, GRAVITY, 0));
+    physicsWorld.setGravity(new Ammo.btVector3(0, BLOB_CONFIG.gravity, 0));
     physicsWorld
       .getWorldInfo()
-      .set_m_gravity(new Ammo.btVector3(0, GRAVITY, 0));
+      .set_m_gravity(new Ammo.btVector3(0, BLOB_CONFIG.gravity, 0));
     transformAux1 = new Ammo.btTransform();
     softBodyHelpers = new Ammo.btSoftBodyHelpers();
   }
 
-  function createObjects() {
+  async function createObjects() {
     addGround({
       Ammo,
       scene,
       physicsWorld,
       margin: BLOB_CONFIG.margin,
     });
-    createBlobs({
+    await createBlobs({
       Ammo,
       softBodyHelpers,
       physicsWorld,
@@ -210,13 +214,13 @@ export function initBlobScene(container) {
   }
 
   loadAmmo()
-    .then((ammoLib) => {
+    .then(async (ammoLib) => {
       if (destroyed) return;
       Ammo = ammoLib;
       window.Ammo = ammoLib;
       initGraphics();
       initPhysics();
-      createObjects();
+      await createObjects();
       dragController = createDragController({
         Ammo,
         camera,
@@ -242,7 +246,9 @@ export function initBlobScene(container) {
       window.addEventListener("resize", onWindowResize);
       animate();
     })
-    .catch(() => {});
+    .catch((error) => {
+      console.error("Scene init failed.", error);
+    });
 
   return cleanup;
 }

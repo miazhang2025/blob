@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import * as BufferGeometryUtils from "three/examples/jsm/utils/BufferGeometryUtils.js";
 
 function processGeometry(bufferGeom) {
@@ -99,7 +100,51 @@ function createSoftVolume({
   return volume;
 }
 
-export function createBlobs({
+async function loadModel(url) {
+  const loader = new GLTFLoader();
+  const gltf = await loader.loadAsync(url);
+  let foundGeometry = null;
+  let foundMaterial = null;
+
+  gltf.scene.traverse((child) => {
+    if (!foundGeometry && child.isMesh && child.geometry) {
+      foundGeometry = child.geometry.clone();
+      if (child.material) {
+        foundMaterial = child.material.clone();
+        foundMaterial.flatShading = false;
+      }
+    }
+  });
+
+  // Merge duplicate vertices so computeVertexNormals produces smooth normals
+  if (foundGeometry) {
+    foundGeometry = BufferGeometryUtils.mergeVertices(foundGeometry);
+    foundGeometry.computeVertexNormals();
+  }
+
+  return { geometry: foundGeometry, material: foundMaterial };
+}
+
+function normalizeGeometry(geometry, radius, anchorPosition) {
+  geometry.computeBoundingBox();
+  const box = geometry.boundingBox;
+  const center = new THREE.Vector3();
+  const size = new THREE.Vector3();
+  box.getCenter(center);
+  box.getSize(size);
+
+  const maxDim = Math.max(size.x, size.y, size.z);
+  const scale = maxDim > 0 ? (radius * 2) / maxDim : 1;
+
+  geometry.translate(-center.x, -center.y, -center.z);
+  geometry.rotateY(- (Math.PI / 2));
+  geometry.scale(scale, scale, scale);
+  geometry.translate(anchorPosition.x, anchorPosition.y, anchorPosition.z);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+export async function createBlobs({
   Ammo,
   softBodyHelpers,
   physicsWorld,
@@ -107,22 +152,37 @@ export function createBlobs({
   config,
   softBodies,
 }) {
-  const materialTemplate = new THREE.MeshPhysicalMaterial({
+  const fallbackMaterial = new THREE.MeshPhysicalMaterial({
     color: 0xff8b7a,
     roughness: 0.18,
     metalness: 0.18,
     clearcoat: 0.35,
   });
 
+  let baseGeometry = null;
+  let baseMaterial = null;
+  if (config.modelUrl) {
+    try {
+      const model = await loadModel(config.modelUrl);
+      baseGeometry = model.geometry;
+      baseMaterial = model.material;
+    } catch (error) {
+      console.warn("Failed to load model, falling back to sphere.", error);
+    }
+  }
+
+  if (!baseGeometry) {
+    baseGeometry = new THREE.SphereGeometry(config.radius, 32, 24);
+  }
+  if (!baseMaterial) {
+    baseMaterial = fallbackMaterial;
+  }
+
+  normalizeGeometry(baseGeometry, config.radius, config.anchorPosition);
+
   for (let i = 0; i < config.count; i += 1) {
-    const geometry = new THREE.SphereGeometry(config.radius, 32, 24);
-    geometry.translate(
-      config.anchorPosition.x,
-      config.anchorPosition.y,
-      config.anchorPosition.z
-    );
-    const material = materialTemplate.clone();
-    material.color.setHSL(0.03 + i * 0.08, 0.75, 0.6);
+    const geometry = baseGeometry.clone();
+    const material = baseMaterial.clone();
     const volume = createSoftVolume({
       Ammo,
       softBodyHelpers,
